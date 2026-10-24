@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'tm.ashyrov.amanat'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'tm.ashyrov.amanat'
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv('AMANAT_VERSION_CODE') ?: '1')
+        versionName '1.0.0'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    signingConfigs {
+        if (System.getenv('AMANAT_KEYSTORE')) {
+            release {
+                storeFile file(System.getenv('AMANAT_KEYSTORE'))
+                storePassword System.getenv('AMANAT_STORE_PASSWORD')
+                keyAlias System.getenv('AMANAT_KEY_ALIAS')
+                keyPassword System.getenv('AMANAT_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('AMANAT_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+}
