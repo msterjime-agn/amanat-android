@@ -16,7 +16,7 @@ public final class ImoNotificationService extends NotificationListenerService {
         Bundle extras = n.extras;
         String title = asText(extras.getCharSequence(Notification.EXTRA_TITLE));
         String conversation = asText(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE));
-        if (!"Amanat".equalsIgnoreCase(title.trim()) && !"Amanat".equalsIgnoreCase(conversation.trim())) return;
+        if (!ImoGroupFilter.accepts(title, conversation, extras.getBoolean("android.isGroupConversation", false))) return;
         long fallback = n.when > 0 ? n.when : notification.getPostTime();
         try (InboxStore store = new InboxStore(this)) {
             Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);

@@ -2,7 +2,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, 'fix/imo-group-metadata']
     paths-ignore: ['**.md']
 permissions:
   contents: read
@@ -28,6 +28,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Test actual Java IMO metadata filter
+        run: |
+          mkdir -p /tmp/amanat-filter-tests
+          javac -d /tmp/amanat-filter-tests app/src/main/java/tm/ashyrov/amanat/ImoGroupFilter.java tests/ImoGroupFilterTest.java
+          java -cp /tmp/amanat-filter-tests tm.ashyrov.amanat.ImoGroupFilterTest
       - name: Check accounting and numbering logic
         run: node --test tests/*.test.mjs
       - uses: gradle/actions/setup-gradle@v4
