@@ -1,4 +1,4 @@
-name: Build Amanat Android APK
+name: Build Android APK
 on:
   workflow_dispatch:
   push:
@@ -33,6 +33,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - uses: android-actions/setup-android@v3
       - name: Install Android SDK components
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Configure release signature when supplied
