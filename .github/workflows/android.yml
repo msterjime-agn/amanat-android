@@ -28,12 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test actual Java IMO metadata filter
-        run: |
-          mkdir -p /tmp/amanat-filter-tests
-          javac -d /tmp/amanat-filter-tests app/src/main/java/tm/ashyrov/amanat/ImoGroupFilter.java tests/ImoGroupFilterTest.java
-          java -cp /tmp/amanat-filter-tests tm.ashyrov.amanat.ImoGroupFilterTest
-      - name: Check accounting and numbering logic
+      - name: Check accounting and IMO group filter
         run: node --test tests/*.test.mjs
       - uses: gradle/actions/setup-gradle@v4
         with:
