@@ -15,6 +15,8 @@ public final class ImoNotificationService extends NotificationListenerService {
         if (n == null || n.extras == null || Notification.CATEGORY_CALL.equals(n.category) || (n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
         Bundle extras = n.extras;
         String title = asText(extras.getCharSequence(Notification.EXTRA_TITLE));
+        String conversation = asText(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE));
+        if (!"Amanat".equalsIgnoreCase(title.trim()) && !"Amanat".equalsIgnoreCase(conversation.trim())) return;
         long fallback = n.when > 0 ? n.when : notification.getPostTime();
         try (InboxStore store = new InboxStore(this)) {
             Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);

@@ -127,6 +127,13 @@ export function parseMessage(text) {
   const raw=String(text || '').trim();
   const result={originalText:raw,type:'money',recipient:'',phone:'',city:'',sender:'',amount:'',currency:'',parcelTotal:'',parcelDesc:'',messageDate:'',warnings:[]};
   const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  const compact=raw.match(/^(?:[^\n:]{1,100}:\s*)?#(\d+)\s+(.+?)\s+(\+?\d{7,15})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*(USD|\$|TMT|TRY|EUR|RUB)\s*$/iu);
+  if(compact){
+    result.recipient=compact[2].trim();result.phone=normalizePhone(compact[3]);result.city=compact[4].trim();result.amount=compact[5];result.currency=compact[6]==='$'?'USD':compact[6].toUpperCase();
+    result.warnings.push('Номер в сообщении: '+compact[1]+'. Дневной п/н Аманат присвоит при сохранении.');
+    return result;
+  }
+
   const get = labels=> {
     const re = new RegExp('^(?:'+labels+')\\s*[:=–—-]\\s*(.+)$','iu');
     return lines.map(l=>l.match(re)).find(Boolean)?.[1]?.trim() || '';

@@ -83,3 +83,5 @@ test('CSV protects formulas and HTML output escapes supplied names',()=>{
   const r=rec({recipient:'=1+1',note:'<script>alert(1)</script>'});assert.ok(exportCsv([r]).includes('"\'=1+1"'));
   const html=printDocument([rec({recipient:'<script>alert(1)</script>'})],{generatedDay:'2026-01-04'});assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;script&gt;'));
 });
+
+test('compact group message retains phone and amount',()=>{const p=parseMessage('AGN 1015: #2 Agmet 863075698 Daşoguz 100 $');assert.equal(p.recipient,'Agmet');assert.equal(p.phone,'863075698');assert.equal(p.city,'Daşoguz');assert.equal(p.amount,'100');assert.equal(p.currency,'USD');});
