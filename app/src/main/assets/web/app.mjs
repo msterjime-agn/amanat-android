@@ -1,4 +1,4 @@
-import {today,dateLabel,money,moneyValue,parseMoney,normalizePhone,totals,status,STATUS,TYPES,CURRENCIES,CITIES,selectRecords,aggregate,parseMessage,escapeHtml,exportCsv,validateRecord,validDate,uid,sequenceWarnings,importCandidate,inboxCandidate} from './core.mjs';
+import {today,dateLabel,money,moneyValue,parseMoney,normalizePhone,totals,status,STATUS,TYPES,CURRENCIES,CITIES,selectRecords,aggregate,parseMessage,escapeHtml,exportCsv,validateRecord,validDate,uid,sequenceWarnings,importCandidate,inboxCandidate,completeToday,applyScreenDay} from './core.mjs';
 import {allRecords,meta,setMeta,saveRecord,makeBackup,restoreBackup} from './db.mjs';
 import {printBody,printDocument} from './printing.mjs';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -21,8 +21,25 @@ function navigation(route){
 }
 function empty(title,desc,action='new',label='Добавить передачу'){return '<div class="empty"><div class="emptyicon">'+icon('box')+'</div><h3>'+e(title)+'</h3><p>'+e(desc)+'</p>'+(action?'<button class="btn primary" data-go="'+action+'">'+e(label)+'</button>':'')+'</div>';}
 function bindGo(){ $$('[data-go]').forEach(x=>x.onclick=()=>go('#'+x.dataset.go)); }
-function recordCard(r){const t=totals(r),s=status(r);return '<article class="card '+(r.archived?'archived':'')+'" data-id="'+e(r.id)+'" tabindex="0" role="button" aria-label="'+e(r.recipient)+', номер '+r.serial+'"><div class="cardhead"><div class="record-no"><b>№ '+r.serial+'</b> · '+dateLabel(r.day)+'</div><span class="badge '+s+'">'+STATUS[s]+'</span></div><h3>'+e(r.recipient)+'</h3>'+(r.note?.includes('п/н')?'<div class="notice warn">'+e(r.note)+'</div>':'')+'<div class="card-meta">'+e(r.city)+' <span>·</span> '+e(r.phone)+'</div><div class="cardbottom"><div class="amount">'+(r.amountMinor?'<small>'+(s==='done'?'Выдано':'Осталось выдать')+'</small>'+money(s==='done'?r.amountMinor:t.remaining,r.currency):'<small>'+TYPES[r.type]+'</small>'+r.parcelTotal+' мест')+(r.parcelTotal&&r.amountMinor?'<div class="hint">Посылка: '+t.parcelsRemaining+' из '+r.parcelTotal+' мест осталось</div>':'')+'</div><span class="tinylink">Открыть →</span></div></article>';}
-function bindCards(){ $$('[data-id]').forEach(x=>{x.onclick=()=>go('#detail/'+x.dataset.id);x.onkeydown=ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();x.click();}};}); }
+function recordCard(r){
+  const t=totals(r),done=status(r)==='done';
+  return '<article class="transfer-row '+(done?'paid-row':'')+'"><button class="row-open" data-id="'+e(r.id)+'"><span class="row-number">#'+r.serial+'<small>'+dateLabel(r.day)+'</small></span><span class="row-person"><b>'+e(r.recipient)+'</b><small>'+e(r.city)+' · '+e(r.phone)+'</small></span><span class="row-sum">'+e(r.amountMinor?money(done?r.amountMinor:t.remaining,r.currency):t.parcelsRemaining+' мест')+'<small>'+(done?'Выдано '+dateLabel((r.history||[]).filter(h=>!h.voidedAt).at(-1)?.date):STATUS[status(r)])+'</small></span></button>'+(done?'<span class="paid-mark">✓ Оплачено</span>':'<button class="btn primary pay-button" data-paid="'+e(r.id)+'">'+(r.type==='money'?'Оплачено':'Выдано')+'</button>')+(r.note?.includes('п/н')?'<div class="row-warning">'+e(r.note)+'</div>':'')+'</article>';
+}
+function bindCards(){
+ $$('[data-id]').forEach(x=>x.onclick=()=>go('#detail/'+x.dataset.id));
+ $$('[data-paid]').forEach(b=>b.onclick=ev=>{ev.stopPropagation();quickPaid(b.dataset.paid);});
+}
+function quickPaid(id){
+ const r=records.find(x=>x.id===id);if(!r||status(r)==='done')return;
+ const t=totals(r);
+ modal(r.type==='money'?'Подтвердить оплату':'Подтвердить выдачу','<p><b>#'+r.serial+' · '+e(r.recipient)+'</b></p><p>'+e([t.remaining?money(t.remaining,r.currency):'',t.parcelsRemaining?t.parcelsRemaining+' мест':''].filter(Boolean).join(' · '))+'</p><p>Дата выдачи: <b>'+dateLabel(today())+'</b></p><div class="actionrow"><button class="btn primary" id="confirm-paid">Подтвердить</button><button class="btn" id="partial-paid">Частичная выдача</button></div>');
+ $('#partial-paid').onclick=()=>issueDialog(r);
+ $('#confirm-paid').onclick=async()=>{
+  const b=$('#confirm-paid');b.disabled=true;
+  try {await saveRecord(completeToday(r,settings.operator),r.updatedAt);$('#modal').close();await refresh();render();toast('Выдано '+dateLabel(today()));}
+  catch(err){fail(err);}finally{b.disabled=false;}
+ };
+}
 function pageRecords(){
   const active=records.filter(x=>!x.archived), open=active.filter(r=>status(r)!=='done');
   const all=selectRecords(records,{status:filterStatus,q:query});
@@ -99,15 +116,30 @@ function bindChatButtons(){
   if($('#chat-bind'))$('#chat-bind').onclick=()=>Android.bindChat();
   if($('#chat-pause'))$('#chat-pause').onclick=()=>{Android.pauseChat();render();};
 }
+function autoDayPanel(){
+ const saved=settings.screenImportDay;
+ const selected=saved?.confirmedOn===today()?saved.day:today();
+ return '<section class="panel compact-panel"><h3>Автоматические карточки</h3><p class="hint">Понятные сообщения сохраняются сразу. Если дата в чате не видна или без года, один раз выберите день списка для этой загрузки. Проверьте, что сообщения относятся к одному дню.</p><div class="grid2">'+field('День сообщений','screen-day',selected,'max="'+today()+'"','date')+'<button class="btn primary" id="apply-screen-day">Применить и создать</button></div><p class="hint">'+(saved?.confirmedOn===today()?'Для неясных дат выбран '+dateLabel(saved.day)+'. Настройка действует до конца сегодняшнего дня.':'Без выбора даты такие сообщения останутся на проверке.')+'</p><button class="linkbtn" id="clear-screen-day">Сбросить выбранный день</button></section>';
+}
+function bindAutoDay(){
+ if($('#apply-screen-day'))$('#apply-screen-day').onclick=async()=>{
+  const day=$('[name="screen-day"]').value;
+  if(!validDate(day)||day>today()){toast('Проверьте день списка');return;}
+  if(!window.confirm('Все сообщения с неясной датой в этой загрузке относятся к '+dateLabel(day)+'?'))return;
+  try{settings.screenImportDay={day,confirmedOn:today()};await setMeta('settings',settings);await processInbox();render();}catch(err){fail(err);}
+ };
+ if($('#clear-screen-day'))$('#clear-screen-day').onclick=async()=>{delete settings.screenImportDay;await setMeta('settings',settings);render();};
+}
+function candidateForInbox(m){return applyScreenDay(m,settings.screenImportDay);}
 function pageInbox(){
-  try{inbox=native()?JSON.parse(Android.getInbox()).map(m=>({...m,reviewWarnings:[...inboxCandidate(m).warnings,...(records.some(r=>r.day===inboxCandidate(m).record.day&&r.serial===inboxCandidate(m).record.serial)?sequenceWarnings(records,inboxCandidate(m).record.day,inboxCandidate(m).record.serial):[])]})):[];}catch{inbox=[];}
+  try{inbox=native()?JSON.parse(Android.getInbox()).map(m=>({...m,reviewWarnings:[...candidateForInbox(m).warnings,...(records.some(r=>r.day===candidateForInbox(m).record.day&&r.serial===candidateForInbox(m).record.serial)?sequenceWarnings(records,candidateForInbox(m).record.day,candidateForInbox(m).record.serial):[])]})):[];}catch{inbox=[];}
   const ns=nativeState();
-  $('#app').innerHTML=header('Сообщения IMO','Понятные сообщения — сразу в карточки; сомнительные — на подтверждение')+'<div class="panel"><h2>Вставить сообщение</h2><p class="hint">Скопируйте текст из IMO или отправьте его в Аманат через «Поделиться», если IMO предлагает эту команду.</p><textarea id="message-text" rows="7" maxlength="20000" placeholder="Получатель: …\nТелефон: +993…\nГород: …\nСумма: 100 USD"></textarea><div class="actionrow"><button class="btn primary" id="parse-message">'+icon('plus')+'Разобрать сообщение</button></div><div class="hint">Программа предложит поля. Сумму, валюту и получателя проверьте перед сохранением.</div></div>'+(native()?chatPanel(ns):'')+(native()?'<div class="panel"><div class="toggleline"><div><h3>Входящие из уведомлений</h3><p>'+(ns.notificationAccess&&ns.captureEnabled?'Сбор включён. Новые текстовые уведомления группы Amanat попадут сюда.':'Подключите доступ, чтобы собирать новые текстовые уведомления IMO.')+'</p></div><span class="badge '+(ns.notificationAccess&&ns.captureEnabled?'done':'')+'">'+(ns.notificationAccess&&ns.captureEnabled?'Включено':'Выключено')+'</span></div><div class="actionrow"><button class="btn" id="imo-settings">Настроить IMO</button><button class="btn ghost" id="refresh-inbox">Обновить</button></div><p class="hint">Сохраняется только текст, который IMO показывает в уведомлении. Содержимое старой переписки, фото и голосовых добавляйте вручную.</p></div>':'<div class="notice">Сбор уведомлений доступен в Android-приложении. В браузере можно вставить текст вручную.</div>')+'<div class="sectionline"><h2>Нужно подтверждение</h2><small>'+inbox.length+' сообщений</small></div>'+(inbox.length?inbox.map((m,i)=>'<article class="inbox-msg"><small>'+e(m.title)+' · '+new Date(m.timestamp).toLocaleString('ru-RU',{timeZone:'Asia/Ashgabat'})+'</small><pre>'+e(m.text)+'</pre><p class="hint">'+e((m.reviewWarnings||[]).join(' '))+'</p><div class="actionrow"><button class="btn primary" data-import="'+i+'">Создать карточку</button><button class="btn ghost" data-dismiss="'+i+'">Не передача</button></div></article>').join(''):empty('Новых сообщений нет','Вставьте сообщение выше или подключите сбор новых уведомлений.','',''));
+  $('#app').innerHTML=header('Сообщения IMO','Понятные сообщения — сразу в карточки; сомнительные — на подтверждение')+'<div class="panel"><h2>Вставить сообщение</h2><p class="hint">Скопируйте текст из IMO или отправьте его в Аманат через «Поделиться», если IMO предлагает эту команду.</p><textarea id="message-text" rows="7" maxlength="20000" placeholder="Получатель: …\nТелефон: +993…\nГород: …\nСумма: 100 USD"></textarea><div class="actionrow"><button class="btn primary" id="parse-message">'+icon('plus')+'Разобрать сообщение</button></div><div class="hint">Программа предложит поля. Сумму, валюту и получателя проверьте перед сохранением.</div></div>'+(native()?autoDayPanel()+chatPanel(ns):'')+(native()?'<div class="panel"><div class="toggleline"><div><h3>Входящие из уведомлений</h3><p>'+(ns.notificationAccess&&ns.captureEnabled?'Сбор включён. Новые текстовые уведомления группы Amanat попадут сюда.':'Подключите доступ, чтобы собирать новые текстовые уведомления IMO.')+'</p></div><span class="badge '+(ns.notificationAccess&&ns.captureEnabled?'done':'')+'">'+(ns.notificationAccess&&ns.captureEnabled?'Включено':'Выключено')+'</span></div><div class="actionrow"><button class="btn" id="imo-settings">Настроить IMO</button><button class="btn ghost" id="refresh-inbox">Обновить</button></div><p class="hint">Сохраняется только текст, который IMO показывает в уведомлении. Содержимое старой переписки, фото и голосовых добавляйте вручную.</p></div>':'<div class="notice">Сбор уведомлений доступен в Android-приложении. В браузере можно вставить текст вручную.</div>')+'<div class="sectionline"><h2>Нужно подтверждение</h2><small>'+inbox.length+' сообщений</small></div>'+(inbox.length?inbox.map((m,i)=>'<article class="inbox-msg"><small>'+e(m.title)+' · '+new Date(m.timestamp).toLocaleString('ru-RU',{timeZone:'Asia/Ashgabat'})+'</small><pre>'+e(m.text)+'</pre><p class="hint">'+e((m.reviewWarnings||[]).join(' '))+'</p><div class="actionrow"><button class="btn primary" data-import="'+i+'">Создать карточку</button><button class="btn ghost" data-dismiss="'+i+'">Не передача</button></div></article>').join(''):empty('Новых сообщений нет','Вставьте сообщение выше или подключите сбор новых уведомлений.','',''));
   $('#parse-message').onclick=()=>startImport($('#message-text').value);
-  bindChatButtons();
+  bindChatButtons();bindAutoDay();
   if($('#imo-settings'))$('#imo-settings').onclick=()=>go('#settings');
   if($('#refresh-inbox'))$('#refresh-inbox').onclick=()=>pageInbox();
-  $$('[data-import]').forEach(b=>b.onclick=()=>{const m=inbox[Number(b.dataset.import)];importInboxId=m.id;draftParsed=inboxCandidate(m).parsed;go('#new/import');});
+  $$('[data-import]').forEach(b=>b.onclick=()=>{const m=inbox[Number(b.dataset.import)];importInboxId=m.id;draftParsed=candidateForInbox(m).parsed;go('#new/import');});
   $$('[data-dismiss]').forEach(b=>b.onclick=()=>{Android.markInbox(inbox[Number(b.dataset.dismiss)].id);pageInbox();});
 }
 function startImport(text){
@@ -151,7 +183,7 @@ function saveFile(name,mime,text){
 }
 function pageSettings(){
   const s=nativeState(),archived=records.filter(r=>r.archived);
-  $('#app').innerHTML=header('Настройки','Резервные копии, печать и подключение IMO')+(native()?chatPanel(s):'')+'<form id="settings-form" class="panel"><h2>Ваш учёт</h2>'+field('Название в печатных списках','business',settings.business,'maxlength="100"')+field('Кто выдаёт передачи','operator',settings.operator,'maxlength="180" placeholder="Имя сотрудника"')+'<button class="btn primary">Сохранить</button></form>'+(native()?'<section class="panel"><h2>Группа IMO: Amanat</h2><p class="hint">Android предоставляет приложению доступ к уведомлениям. Аманат сохраняет уведомления только от поддерживаемых приложений IMO; текст остаётся на этом телефоне.</p><div class="row"><span class="muted">Системный доступ</span><b>'+(s.notificationAccess?'Разрешён':'Не разрешён')+'</b></div><div class="row"><span class="muted">Сбор в Аманат</span><b>'+(s.captureEnabled?'Включён':'Выключен')+'</b></div><div class="actionrow"><button class="btn primary" id="connect-imo">'+(s.notificationAccess?'Открыть настройки доступа':'Подключить IMO')+'</button><button class="btn" id="toggle-capture">'+(s.captureEnabled?'Остановить сбор':'Включить сбор')+'</button></div><p class="hint">Понятные сообщения создают карточки автоматически при открытом приложении или следующем запуске. Сомнительные сообщения требуют подтверждения в разделе IMO. Резервная копия ниже сохраняет карточки; необработанные уведомления остаются на телефоне.</p></section>':'')+'<section class="panel"><h2>Резервная копия</h2><p class="hint">Копия содержит все карточки, историю выдач, архив и дневные счётчики. Сохраните файл, чтобы восстановить учёт на другом телефоне.</p><div class="actionrow"><button class="btn primary" id="backup">'+icon('download')+'Сохранить копию</button><button class="btn" id="restore">Восстановить</button></div><p class="hint">Восстановление доступно в пустую базу и сохраняет исходные номера. После выбора файла программа проверит его и покажет количество записей.</p><div class="row"><span class="muted">Карточек на телефоне</span><b>'+records.length+'</b></div></section><section class="panel"><h2>Таблица для компьютера</h2><p class="hint">CSV открывается в Excel. Для полного переноса учёта используйте резервную копию JSON.</p><button class="btn" id="export-all">'+icon('download')+'Выгрузить все карточки</button></section><section class="panel"><h2>Архив <span class="muted">'+archived.length+'</span></h2><p class="hint">Архив скрывает полностью выданные передачи из основного списка. Они остаются в статистике и резервной копии.</p>'+(archived.length?archived.map(r=>'<div class="row"><span>№ '+r.serial+' · '+dateLabel(r.day)+'<br><b>'+e(r.recipient)+'</b></span><button class="btn" data-open="'+e(r.id)+'">Открыть</button></div>').join(''):'<p class="hint">Архив пуст.</p>')+'</section><p class="subtle">Аманат 1.2.0 · Учёт Турция → Туркменистан<br>П/н начинается с 1 для каждого дня списка. Данные хранятся на этом устройстве.</p>';
+  $('#app').innerHTML=header('Настройки','Резервные копии, печать и подключение IMO')+(native()?chatPanel(s):'')+'<form id="settings-form" class="panel"><h2>Ваш учёт</h2>'+field('Название в печатных списках','business',settings.business,'maxlength="100"')+field('Кто выдаёт передачи','operator',settings.operator,'maxlength="180" placeholder="Имя сотрудника"')+'<button class="btn primary">Сохранить</button></form>'+(native()?'<section class="panel"><h2>Группа IMO: Amanat</h2><p class="hint">Android предоставляет приложению доступ к уведомлениям. Аманат сохраняет уведомления только от поддерживаемых приложений IMO; текст остаётся на этом телефоне.</p><div class="row"><span class="muted">Системный доступ</span><b>'+(s.notificationAccess?'Разрешён':'Не разрешён')+'</b></div><div class="row"><span class="muted">Сбор в Аманат</span><b>'+(s.captureEnabled?'Включён':'Выключен')+'</b></div><div class="actionrow"><button class="btn primary" id="connect-imo">'+(s.notificationAccess?'Открыть настройки доступа':'Подключить IMO')+'</button><button class="btn" id="toggle-capture">'+(s.captureEnabled?'Остановить сбор':'Включить сбор')+'</button></div><p class="hint">Понятные сообщения создают карточки автоматически при открытом приложении или следующем запуске. Сомнительные сообщения требуют подтверждения в разделе IMO. Резервная копия ниже сохраняет карточки; необработанные уведомления остаются на телефоне.</p></section>':'')+'<section class="panel"><h2>Резервная копия</h2><p class="hint">Копия содержит все карточки, историю выдач, архив и дневные счётчики. Сохраните файл, чтобы восстановить учёт на другом телефоне.</p><div class="actionrow"><button class="btn primary" id="backup">'+icon('download')+'Сохранить копию</button><button class="btn" id="restore">Восстановить</button></div><p class="hint">Восстановление доступно в пустую базу и сохраняет исходные номера. После выбора файла программа проверит его и покажет количество записей.</p><div class="row"><span class="muted">Карточек на телефоне</span><b>'+records.length+'</b></div></section><section class="panel"><h2>Таблица для компьютера</h2><p class="hint">CSV открывается в Excel. Для полного переноса учёта используйте резервную копию JSON.</p><button class="btn" id="export-all">'+icon('download')+'Выгрузить все карточки</button></section><section class="panel"><h2>Архив <span class="muted">'+archived.length+'</span></h2><p class="hint">Архив скрывает полностью выданные передачи из основного списка. Они остаются в статистике и резервной копии.</p>'+(archived.length?archived.map(r=>'<div class="row"><span>№ '+r.serial+' · '+dateLabel(r.day)+'<br><b>'+e(r.recipient)+'</b></span><button class="btn" data-open="'+e(r.id)+'">Открыть</button></div>').join(''):'<p class="hint">Архив пуст.</p>')+'</section><p class="subtle">Аманат 1.3.0 · Учёт Турция → Туркменистан<br>П/н начинается с 1 для каждого дня списка. Данные хранятся на этом устройстве.</p>';
   bindChatButtons();
   $('#settings-form').onsubmit=async ev=>{ev.preventDefault();try{const f=new FormData(ev.target);settings={business:f.get('business').trim()||'Аманат',operator:f.get('operator').trim()};await setMeta('settings',settings);toast('Настройки сохранены');}catch(err){fail(err);}};
   if($('#connect-imo'))$('#connect-imo').onclick=()=>{Android.setCaptureEnabled(true);Android.openNotificationSettings();};
@@ -168,40 +200,43 @@ async function receiveBackup(text){
     $('#confirm-restore').onclick=async()=>{try{const count=await restoreBackup(data);$('#modal').close();await refresh();go('#records');toast('Восстановлено карточек: '+count);}catch(err){fail(err);}};
   }catch(err){fail(err instanceof SyntaxError?new Error('Файл не содержит корректную резервную копию JSON.'):err);}
 }
+let renderedHash=null;
 function render(){
+  const hash=location.hash||'#records', sameRoute=renderedHash===hash, scroll=sameRoute?window.scrollY:0;
+  renderedHash=hash;
   try{
     const [route='records',id]=(location.hash.slice(1)||'records').split('/');
     navigation(['detail','edit','new'].includes(route)?route:route);
     switch(route){case 'records':pageRecords();break;case 'new':if(id==='import'&&draftParsed)pageForm(null,draftParsed);else{importInboxId=null;pageForm();}break;case 'edit':{const r=records.find(x=>x.id===id);r?pageForm(r):go('#records');break;}case 'detail':pageDetail(id);break;case 'inbox':pageInbox();break;case 'stats':pageStats();break;case 'print':pagePrint();break;case 'settings':pageSettings();break;default:go('#records');}
-    window.scrollTo(0,0);
+    window.scrollTo(0,scroll);
   }catch(err){fail(err);}
 }
 let processing=false;
 async function processInbox(){
-  if(!native()||processing||location.hash.startsWith('#new')||location.hash.startsWith('#edit'))return;
-  processing=true;const previousReview=inbox.map(m=>m.id).join(',');
+  if(!native()||processing||$('#modal').open||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)||location.hash.startsWith('#new')||location.hash.startsWith('#edit'))return;
+  processing=true;const previousReview=inbox.map(m=>m.id).sort().join(',');
   try{
     await refresh();const pending=JSON.parse(Android.getInbox()).sort((a,b)=>a.timestamp-b.timestamp);
     const review=[];let added=0;
     for(const m of pending){
-      const c=inboxCandidate(m);
+      const c=candidateForInbox(m);
       const same=records.find(r=>r.sourceInboxId===m.id || (r.day===c.record.day&&r.originalText===c.record.originalText));
       if(same){Android.markInbox(m.id);continue;}
       const seq=sequenceWarnings(records,c.record.day,c.record.serial);
       // A gap warns but never changes the source number. Repeated numbers require review.
       if(records.some(r=>r.day===c.record.day&&r.serial===c.record.serial))c.warnings.push(...seq);
       if(c.warnings.length){review.push({...m,reviewWarnings:c.warnings});continue;}
-      const saved=await saveRecord({...c.record,sourceInboxId:m.id,note:seq.join(' ')});records.push(saved);Android.markInbox(m.id);added++;
+      const saved=await saveRecord({...c.record,sourceInboxId:m.id,note:[c.record.note,...seq].filter(Boolean).join(' ')});records.push(saved);Android.markInbox(m.id);added++;
     }
     inbox=review;
     if(added)toast('Автоматически создано карточек: '+added);
-    if((added||previousReview!==inbox.map(m=>m.id).join(','))&&!location.hash.startsWith('#new')&&!location.hash.startsWith('#edit')&&!$('#modal').open)render();
+    if((added||previousReview!==inbox.map(m=>m.id).sort().join(','))&&!location.hash.startsWith('#new')&&!location.hash.startsWith('#edit')&&!$('#modal').open)render();
   }catch(err){toast(errorText(err));}finally{processing=false;}
 }
 setInterval(processInbox,4000);
-window.Amanat={onChatChanged:message=>{toast(message);render();},onSharedText:text=>{importInboxId=null;startImport(text);},onBackup:receiveBackup,onFileSaved:name=>toast('Сохранено: '+name),onError:message=>fail(new Error(message)),onResume:()=>{processInbox();if(location.hash==='#inbox')pageInbox();if(location.hash==='#settings')pageSettings();},back:()=>{if($('#modal').open){$('#modal').close();return true;}if(location.hash&&location.hash!=='#records'){go('#records');return true;}return false;}};
+window.Amanat={onChatChanged:message=>{toast(message);render();},onSharedText:text=>{importInboxId=null;startImport(text);},onBackup:receiveBackup,onFileSaved:name=>toast('Сохранено: '+name),onError:message=>fail(new Error(message)),onResume:()=>{processInbox();if(location.hash==='#settings')render();},back:()=>{if($('#modal').open){$('#modal').close();return true;}if(location.hash&&location.hash!=='#records'){go('#records');return true;}return false;}};
 $('#add').onclick=()=>go('#new');$('#quick-print').innerHTML=icon('print');$('#quick-print').onclick=()=>go('#print');
 $('#restore-file').onchange=async ev=>{const file=ev.target.files[0];if(file){if(file.size>30*1024*1024)fail(new Error('Размер копии больше 30 МБ.'));else await receiveBackup(await file.text());}ev.target.value='';};
 window.addEventListener('hashchange',render);
-window.addEventListener('focus',async()=>{try{if(!location.hash.startsWith('#new')&&!location.hash.startsWith('#edit')&&!$('#modal').open){await refresh();render();}}catch{}});
+window.addEventListener('focus',()=>{processInbox();});
 try{await refresh();render();if(native()){Android.ready();await processInbox();}}catch(err){$('#app').innerHTML=empty('Не удалось открыть данные','Откройте приложение повторно. Данные не были изменены.','','');fail(err);}

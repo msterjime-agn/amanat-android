@@ -228,3 +228,15 @@ export function inboxCandidate(item) {
   }
   return c;
 }
+
+export function completeToday(r,operator='',date=today()) {
+  if(status(r)==='done')throw new Error('Эта передача уже выдана.');
+  const t=totals(r);
+  return validateRecord({...r,history:[...(r.history||[]),{id:uid(),date,amountMinor:t.remaining,parcels:t.parcelsRemaining,deliveredTo:r.recipient,operator,note:'Полная выдача кнопкой в списке',createdAt:new Date().toISOString()}]});
+}
+export function applyScreenDay(item,selection,currentDay=today()) {
+  if(!item.screen||validDate(item.screen.day)||!validDate(selection?.day)||selection.day>currentDay||selection.confirmedOn!==currentDay)return inboxCandidate(item);
+  const c=inboxCandidate({...item,screen:{...item.screen,day:selection.day,warning:''}});
+  c.record.note='День списка '+dateLabel(selection.day)+' выбран вручную для загрузки из чата.';
+  return c;
+}
