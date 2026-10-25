@@ -214,3 +214,17 @@ export function importCandidate(text,timestamp=Date.now()) {
   if(!Number.isSafeInteger(p.serial)||p.serial<1) warnings.push('П/н сообщения не определён.');
   return {record,parsed:{...p,day,receivedDate:day,messageDate:record.messageDate},warnings:[...new Set(warnings)]};
 }
+
+export function inboxCandidate(item) {
+  const c=importCandidate(item.text,item.timestamp);
+  if(item.screen){
+    // A screen capture timestamp is not the message date. Never use it as one.
+    const day=validDate(item.screen.day)&&item.screen.day<=today()?item.screen.day:'';
+    Object.assign(c.record,{day,receivedDate:day,messageDate:day});
+    Object.assign(c.parsed,{day,receivedDate:day,messageDate:day});
+    if(!day)c.warnings.push(item.screen.warning||'Укажите дату сообщения с годом.');
+    else if(item.screen.warning)c.warnings.push(item.screen.warning);
+    c.parsed.warnings=[...new Set(c.warnings)];
+  }
+  return c;
+}
