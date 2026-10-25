@@ -203,7 +203,7 @@ public final class MainActivity extends Activity {
                     @Override public void onPageFinished(WebView view, String url) {
                         PrintManager pm = (PrintManager) getSystemService(PRINT_SERVICE);
                         if (pm == null) { send("onError", "Служба печати недоступна на этом телефоне."); return; }
-                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4.asLandscape()).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
+                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
                     }
                 });
                 printView.loadDataWithBaseURL(ORIGIN, html, "text/html", "UTF-8", null);

@@ -1,18 +1,11 @@
-import {escapeHtml as e,money,totals,status,STATUS,dateLabel,within} from './core.mjs';
-export function printBody(records, opts={}){
-  const sorted=records.slice().sort((a,b)=>a.day.localeCompare(b.day)||a.serial-b.serial);
-  const phone=opts.showPhone!==false, signature=opts.signature!==false, sender=Boolean(opts.showSender);
-  const cols=8+Number(phone)+Number(signature)+Number(sender);
-  let last='',body='';const sums={};let places=0,issuedPlaces=0;
-  for(const r of sorted){
-    const t=totals(r);
-    const hs=(r.history||[]).filter(h=>!h.voidedAt && (opts.basis!=='issued'||within(h.date,opts.from,opts.to)));
-    const paid=opts.basis==='issued'?hs.reduce((s,h)=>s+h.amountMinor,0):t.paid;
-    if(last!==r.day){last=r.day;body+='<tr class="day"><td colspan="'+cols+'">День списка: '+dateLabel(r.day)+'</td></tr>';}
-    body+='<tr><td>'+r.serial+'</td><td>'+dateLabel(r.receivedDate)+'</td><td class="name">'+e(r.recipient)+'</td>'+(phone?'<td class="nowrap">'+e(r.phone)+'</td>':'')+'<td>'+e(r.city)+'</td>'+(sender?'<td>'+e(r.sender)+'</td>':'')+'<td class="nowrap">'+(r.amountMinor?money(r.amountMinor,r.currency):'—')+'</td><td class="nowrap">'+(r.amountMinor?money(paid,r.currency):'—')+'</td><td>'+ (r.parcelTotal?(opts.basis==='issued'?hs.reduce((s,h)=>s+h.parcels,0):t.parcels)+' / '+r.parcelTotal:'—') +'</td><td>'+STATUS[status(r)]+'<small>'+hs.map(h=>dateLabel(h.date)).join(', ')+'</small></td>'+(signature?'<td class="signature"></td>':'')+'</tr>';
-    if(r.amountMinor){const g=sums[r.currency]||={total:0,paid:0,left:0};g.total+=r.amountMinor;g.paid+=paid;g.left+=t.remaining;}
-    places+=r.parcelTotal;issuedPlaces+=opts.basis==='issued'?hs.reduce((s,h)=>s+h.parcels,0):t.parcels;
-  }
-  return '<h1>'+e(opts.business||'Аманат')+' · '+e(opts.title||'Список передач')+'</h1><p class="subtitle">Турция → Туркменистан'+(opts.city?' · '+e(opts.city):'')+(opts.from||opts.to?' · '+dateLabel(opts.from)+' — '+dateLabel(opts.to):'')+'</p><p class="meta">Записей: '+records.length+' · Составлено: '+e(dateLabel(opts.generatedDay))+' · Дата отбора: '+(opts.basis==='issued'?'выдача':opts.basis==='received'?'приём':'день списка')+'</p><table><thead><tr><th>П/н</th><th>Дата приёма</th><th>Получатель</th>'+(phone?'<th>Телефон</th>':'')+'<th>Город</th>'+(sender?'<th>Отправитель</th>':'')+'<th>Денег всего</th><th>Выдано'+(opts.basis==='issued'?'<br>за период':'')+'</th><th>Мест выдано / всего</th><th>Статус / даты выдачи</th>'+(signature?'<th>Подпись получателя</th>':'')+'</tr></thead><tbody>'+body+'</tbody></table><div class="totals"><h2>Итоги по выбранным записям</h2>'+Object.entries(sums).map(([c,g])=>'<p><b>'+c+':</b> всего '+money(g.total,c)+' · выдано'+(opts.basis==='issued'?' за период':'')+' '+money(g.paid,c)+' · текущий остаток '+money(g.left,c)+'</p>').join('')+(places?'<p>Посылки: выдано '+issuedPlaces+' из '+places+' мест.</p>':'')+'<p class="meta">Валюты посчитаны отдельно. П/н сохранены по дням регистрации.</p></div>';
+import {escapeHtml as e,money,status,dateLabel} from './core.mjs';
+export function printBody(records){
+ let day='',html='';
+ for(const r of records.slice().sort((a,b)=>b.day.localeCompare(a.day)||a.serial-b.serial)){
+  if(day!==r.day){if(day)html+='</section>';day=r.day;html+='<section class="print-day"><h2>'+dateLabel(day)+'</h2>';}
+  const state=status(r),mark=state==='done'?'✓':state==='partial'?'◐':'☐';
+  html+='<div class="print-line"><span class="print-text"><span class="print-serial">#'+r.serial+'</span> '+e(r.recipient)+' '+e(r.phone)+' '+e(r.city)+' <b>'+e([r.amountMinor?money(r.amountMinor,r.currency):'',r.parcelTotal?r.parcelTotal+' мест':''].filter(Boolean).join(' · '))+'</b></span><span class="print-mark" aria-label="'+(state==='done'?'Оплачено':state==='partial'?'Частично оплачено':'Не оплачено')+'">'+mark+'</span></div>';
+ }
+ return html+(day?'</section>':'');
 }
-export function printDocument(records,opts={}){return '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Аманат — список</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:10px;color:#142a23}h1{font-size:18px;margin:0 0 6px}h2{font-size:12px}p{margin:5px 0}.subtitle{font-size:12px;margin-bottom:9px}.meta{font-size:9px;color:#526157}table{border-collapse:collapse;width:100%;margin-top:14px;table-layout:auto}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}th,td{border:1px solid #8a998e;padding:7px 5px;text-align:left;vertical-align:middle;overflow-wrap:anywhere}th{background:#e8ede7;font-weight:700}td.name{min-width:32mm;font-size:11px;font-weight:600}td.signature{min-width:26mm;height:13mm}.nowrap{white-space:nowrap;overflow-wrap:normal}small{display:block;font-size:8px;margin-top:4px}.day td{background:#f1f4ed;font-weight:bold;padding:6px;break-after:avoid}.totals{margin-top:15px;break-inside:avoid} .totals p{line-height:1.6}</style></head><body>'+printBody(records,opts)+'</body></html>';}
+export function printDocument(records,opts={}){return '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>'+e(opts.business||'Аманат')+' — список</title><style>@page{size:A4 portrait;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:12px;color:#172e29;margin:0}h2{font-size:14px;margin:18px 0 6px;break-after:avoid}.print-line{display:flex;align-items:center;gap:12px;border-bottom:1px solid #ddd;padding:9px 0;break-inside:avoid}.print-text{flex:1;overflow-wrap:anywhere;line-height:1.6}.print-serial{font-weight:bold}.print-mark{font-size:22px;flex:none;width:25px;text-align:center}</style></head><body>'+printBody(records)+'</body></html>';}
