@@ -240,3 +240,37 @@ export function applyScreenDay(item,selection,currentDay=today()) {
   c.record.note='День списка '+dateLabel(selection.day)+' выбран вручную для загрузки из чата.';
   return c;
 }
+
+const monthNumbers={янв:1,января:1,фев:2,февр:2,февраля:2,мар:3,марта:3,апр:4,апреля:4,май:5,мая:5,июн:6,июня:6,июл:7,июля:7,авг:8,августа:8,сен:9,сент:9,сентября:9,окт:10,октября:10,ноя:11,нояб:11,ноября:11,дек:12,декабря:12,jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+export function screenDateWithYear(label,year,currentDay=today()) {
+  if(!Number.isInteger(year)||year<1970||year>Number(currentDay.slice(0,4)))return '';
+  const text=String(label||'').trim().toLocaleLowerCase();
+  const m=text.match(/^(\d{1,2})\s+([\p{L}]+)\.?$/u);
+  if(!m||!monthNumbers[m[2]])return '';
+  const date=year+'-'+String(monthNumbers[m[2]]).padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return validDate(date)&&date<=currentDay?date:'';
+}
+export function screenContext(item) {
+  return item.screen?.context || item.screen?.warning?.match(/«([^»]+)»/u)?.[1] || '';
+}
+export function applyScreenSelection(item,yearSelection,daySelection,currentDay=today()) {
+  if(!item.screen||validDate(item.screen.day))return inboxCandidate(item);
+  const label=screenContext(item);
+  if(label){
+    const day=yearSelection?.confirmedOn===currentDay?screenDateWithYear(label,yearSelection.year,currentDay):'';
+    if(!day)return inboxCandidate(item); // A known day/month is never overwritten by a bulk fallback day.
+    const c=inboxCandidate({...item,screen:{...item.screen,day,warning:''}});
+    c.record.note='Дата '+dateLabel(day)+' из IMO; год выбран при загрузке.';
+    return c;
+  }
+  return applyScreenDay(item,daySelection,currentDay);
+}
+
+export function sameHandover(a,b) {
+  const text=v=>String(v||'').trim().replace(/\s+/gu,' ').toLocaleLowerCase();
+  const city=v=>{const n=text(v);return cities.find(([name,aliases])=>[name,...aliases].some(x=>text(x)===n))?.[0]||n;};
+  return Boolean(a.day&&a.day===b.day&&a.serial===b.serial&&text(a.recipient)===text(b.recipient)
+    &&normalizePhone(a.phone)===normalizePhone(b.phone)&&city(a.city)===city(b.city)
+    &&a.amountMinor===b.amountMinor&&a.currency===b.currency&&a.type===b.type
+    &&a.parcelTotal===b.parcelTotal&&text(a.parcelDesc)===text(b.parcelDesc));
+}

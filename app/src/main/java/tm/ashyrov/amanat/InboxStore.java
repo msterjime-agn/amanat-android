@@ -36,7 +36,7 @@ final class InboxStore extends SQLiteOpenHelper {
             String identity="screen\n"+pkg+"\n"+members+"\n"+day+"\n"+context+"\n"+time+"\n"+text;
             byte[] digest=MessageDigest.getInstance("SHA-256").digest(identity.getBytes(StandardCharsets.UTF_8));
             StringBuilder id=new StringBuilder();for(byte b:digest)id.append(String.format("%02x",b&255));
-            JSONObject metadata=new JSONObject();metadata.put("day",day);metadata.put("warning",warning);metadata.put("time",time);
+            JSONObject metadata=new JSONObject();metadata.put("day",day);metadata.put("warning",warning);metadata.put("time",time);metadata.put("context",context);
             ContentValues cv=new ContentValues();cv.put("id",id.toString());cv.put("title","Amanat · чат");cv.put("body",text);cv.put("stamp",System.currentTimeMillis());cv.put("screen_meta",metadata.toString());
             getWritableDatabase().insertWithOnConflict("inbox",null,cv,SQLiteDatabase.CONFLICT_IGNORE);
         } catch(Exception ignored) { }
