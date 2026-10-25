@@ -1,6 +1,7 @@
 package tm.ashyrov.amanat;
 
 import android.app.Notification;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.service.notification.NotificationListenerService;
@@ -16,7 +17,8 @@ public final class ImoNotificationService extends NotificationListenerService {
         Bundle extras = n.extras;
         String title = asText(extras.getCharSequence(Notification.EXTRA_TITLE));
         String conversation = asText(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE));
-        if (!"Amanat".equalsIgnoreCase(title.trim()) && !"Amanat".equalsIgnoreCase(conversation.trim())) return;
+        if (!ImoGroupFilter.accepts(conversation,
+                extras.get(Notification.EXTRA_IS_GROUP_CONVERSATION), Build.VERSION.SDK_INT)) return;
         long fallback = n.when > 0 ? n.when : notification.getPostTime();
         try (InboxStore store = new InboxStore(this)) {
             Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);

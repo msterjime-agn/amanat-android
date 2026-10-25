@@ -91,7 +91,7 @@ export function selectRecords(records, f={}) {
     if (q && ![r.recipient,r.phone,r.city,r.sender,r.note,r.serial+'',dateLabel(r.day)].join(' ').toLocaleLowerCase().includes(q) && !(digits.length>=4 && r.phone.replace(/\D/g,'').includes(digits))) return false;
     if (f.basis==='issued') return (r.history || []).some(h=>!h.voidedAt && within(h.date,f.from,f.to));
     return within(f.basis==='received' ? r.receivedDate : r.day,f.from,f.to);
-  }).sort((a,b)=>b.day.localeCompare(a.day) || b.serial-a.serial);
+  }).sort((a,b)=>b.day.localeCompare(a.day) || a.serial-b.serial);
 }
 export function aggregate(records,from='',to='') {
   const groups = {};
@@ -127,13 +127,17 @@ export function parseMessage(text) {
   const raw=String(text || '').trim();
   const result={originalText:raw,type:'money',recipient:'',phone:'',city:'',sender:'',amount:'',currency:'',parcelTotal:'',parcelDesc:'',messageDate:'',warnings:[]};
   const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
-  const compact=raw.match(/^(?:[^\n:]{1,100}:\s*)?#(\d+)\s+(.+?)\s+(\+?\d{7,15})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*(USD|\$|TMT|TRY|EUR|RUB)\s*$/iu);
+  const compact=raw.replace(/\s+/gu,' ').match(/^(?:[^\n:]{1,100}:\s*)?#(\d+)\s+(.+?)\s+(\+?\d{7,15})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*(USD|\$|TMT|TRY|EUR|RUB)\s*$/iu);
   if(compact){
     result.recipient=compact[2].trim();result.phone=normalizePhone(compact[3]);result.city=compact[4].trim();result.amount=compact[5];result.currency=compact[6]==='$'?'USD':compact[6].toUpperCase();
-    result.warnings.push('Номер в сообщении: '+compact[1]+'. Дневной п/н Аманат присвоит при сохранении.');
+    result.serial=Number(compact[1]);
+    if(!Number.isSafeInteger(result.serial)||result.serial<1) result.warnings.push('Проверьте п/н сообщения.');
+    if(!/^[\p{L}][\p{L} .’'—-]*$/u.test(result.recipient)) result.warnings.push('Проверьте имя получателя.');
     return result;
   }
 
+  const serialMatch=raw.match(/(?:^|\s)#(\d+)\b/u);
+  if(serialMatch) result.serial=Number(serialMatch[1]);
   const get = labels=> {
     const re = new RegExp('^(?:'+labels+')\\s*[:=–—-]\\s*(.+)$','iu');
     return lines.map(l=>l.match(re)).find(Boolean)?.[1]?.trim() || '';
@@ -187,11 +191,86 @@ export function validateBackup(data) {
   for(const r of data.records) {
     validateRecord(r);
     if(typeof r.id!=='string'||!r.id||ids.has(r.id)||!Number.isSafeInteger(r.serial)||r.serial<1) throw new Error('Повреждены номера записей в копии.');
-    const num=r.day+':'+r.serial; if(nums.has(num)) throw new Error('В копии повторяется дневной номер.');
+    const num=r.day+':'+r.serial;
     const hids=new Set(); for(const h of r.history||[]) {if(hids.has(h.id)) throw new Error('В копии повторяется выдача.'); hids.add(h.id);}
     ids.add(r.id); nums.add(num);
   }
   if(!data.sequences || typeof data.sequences!=='object' || Array.isArray(data.sequences)) throw new Error('В копии нет счётчиков нумерации.');
   for(const [day,n] of Object.entries(data.sequences)) if(!validDate(day)||!Number.isSafeInteger(n)||n<0) throw new Error('Повреждены счётчики нумерации.');
   return data;
+}
+
+export function sequenceWarnings(records,day,serial) {
+  const same=records.filter(r=>r.day===day);
+  if(same.some(r=>r.serial===serial)) return ['П/н #'+serial+' за этот день уже существует. Подтвердите отдельную передачу.'];
+  const expected=Math.max(0,...same.map(r=>r.serial))+1;
+  return serial===expected?[]:['Нарушен порядок п/н: ожидался #'+expected+', получен #'+serial+'. Номер сохранится как в IMO.'];
+}
+export function importCandidate(text,timestamp=Date.now()) {
+  const p=parseMessage(text), day=today(new Date(timestamp));
+  const record={...p,day,receivedDate:day,messageDate:p.messageDate||day,amountMinor:0,currency:p.currency||'',parcelTotal:p.type==='money'?0:Number(p.parcelTotal),history:[],archived:false,note:'',senderPhone:''};
+  const warnings=[...p.warnings];
+  try {record.amountMinor=p.type==='parcel'?0:parseMoney(p.amount);validateRecord(record);} catch(err){warnings.push(err.message);}
+  if(!Number.isSafeInteger(p.serial)||p.serial<1) warnings.push('П/н сообщения не определён.');
+  return {record,parsed:{...p,day,receivedDate:day,messageDate:record.messageDate},warnings:[...new Set(warnings)]};
+}
+
+export function inboxCandidate(item) {
+  const c=importCandidate(item.text,item.timestamp);
+  if(item.screen){
+    // A screen capture timestamp is not the message date. Never use it as one.
+    const day=validDate(item.screen.day)&&item.screen.day<=today()?item.screen.day:'';
+    Object.assign(c.record,{day,receivedDate:day,messageDate:day});
+    Object.assign(c.parsed,{day,receivedDate:day,messageDate:day});
+    if(!day)c.warnings.push(item.screen.warning||'Укажите дату сообщения с годом.');
+    else if(item.screen.warning)c.warnings.push(item.screen.warning);
+    c.parsed.warnings=[...new Set(c.warnings)];
+  }
+  return c;
+}
+
+export function completeToday(r,operator='',date=today()) {
+  if(status(r)==='done')throw new Error('Эта передача уже выдана.');
+  const t=totals(r);
+  return validateRecord({...r,history:[...(r.history||[]),{id:uid(),date,amountMinor:t.remaining,parcels:t.parcelsRemaining,deliveredTo:r.recipient,operator,note:'Полная выдача кнопкой в списке',createdAt:new Date().toISOString()}]});
+}
+export function applyScreenDay(item,selection,currentDay=today()) {
+  if(!item.screen||validDate(item.screen.day)||!validDate(selection?.day)||selection.day>currentDay||selection.confirmedOn!==currentDay)return inboxCandidate(item);
+  const c=inboxCandidate({...item,screen:{...item.screen,day:selection.day,warning:''}});
+  c.record.note='День списка '+dateLabel(selection.day)+' выбран вручную для загрузки из чата.';
+  return c;
+}
+
+const monthNumbers={янв:1,января:1,фев:2,февр:2,февраля:2,мар:3,марта:3,апр:4,апреля:4,май:5,мая:5,июн:6,июня:6,июл:7,июля:7,авг:8,августа:8,сен:9,сент:9,сентября:9,окт:10,октября:10,ноя:11,нояб:11,ноября:11,дек:12,декабря:12,jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+export function screenDateWithYear(label,year,currentDay=today()) {
+  if(!Number.isInteger(year)||year<1970||year>Number(currentDay.slice(0,4)))return '';
+  const text=String(label||'').trim().toLocaleLowerCase();
+  const m=text.match(/^(\d{1,2})\s+([\p{L}]+)\.?$/u);
+  if(!m||!monthNumbers[m[2]])return '';
+  const date=year+'-'+String(monthNumbers[m[2]]).padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return validDate(date)&&date<=currentDay?date:'';
+}
+export function screenContext(item) {
+  return item.screen?.context || item.screen?.warning?.match(/«([^»]+)»/u)?.[1] || '';
+}
+export function applyScreenSelection(item,yearSelection,daySelection,currentDay=today()) {
+  if(!item.screen||validDate(item.screen.day))return inboxCandidate(item);
+  const label=screenContext(item);
+  if(label){
+    const day=yearSelection?.confirmedOn===currentDay?screenDateWithYear(label,yearSelection.year,currentDay):'';
+    if(!day)return inboxCandidate(item); // A known day/month is never overwritten by a bulk fallback day.
+    const c=inboxCandidate({...item,screen:{...item.screen,day,warning:''}});
+    c.record.note='Дата '+dateLabel(day)+' из IMO; год выбран при загрузке.';
+    return c;
+  }
+  return applyScreenDay(item,daySelection,currentDay);
+}
+
+export function sameHandover(a,b) {
+  const text=v=>String(v||'').trim().replace(/\s+/gu,' ').toLocaleLowerCase();
+  const city=v=>{const n=text(v);return cities.find(([name,aliases])=>[name,...aliases].some(x=>text(x)===n))?.[0]||n;};
+  return Boolean(a.day&&a.day===b.day&&a.serial===b.serial&&text(a.recipient)===text(b.recipient)
+    &&normalizePhone(a.phone)===normalizePhone(b.phone)&&city(a.city)===city(b.city)
+    &&a.amountMinor===b.amountMinor&&a.currency===b.currency&&a.type===b.type
+    &&a.parcelTotal===b.parcelTotal&&text(a.parcelDesc)===text(b.parcelDesc));
 }

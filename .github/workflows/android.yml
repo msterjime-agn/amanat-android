@@ -2,7 +2,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, 'fix/imo-group-metadata']
     paths-ignore: ['**.md']
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check accounting and numbering logic
+      - name: Check accounting and IMO group filter
         run: node --test tests/*.test.mjs
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -59,9 +59,9 @@ jobs:
         run: |
           mkdir -p output
           if [ -n "$SIGNING_BASE64" ]; then
-            cp app/build/outputs/apk/release/app-release.apk output/Amanat-1.0.0.apk
+            cp app/build/outputs/apk/release/app-release.apk output/Amanat-1.4.0.apk
           else
-            cp app/build/outputs/apk/debug/app-debug.apk output/Amanat-1.0.0-test.apk
+            cp app/build/outputs/apk/debug/app-debug.apk output/Amanat-1.4.0-test.apk
           fi
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose output/*.apk
           sha256sum output/*.apk > output/SHA256SUMS.txt

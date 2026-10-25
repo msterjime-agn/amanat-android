@@ -130,6 +130,21 @@ public final class MainActivity extends Activity {
                 }
                 state.put("notificationAccess", access);
                 state.put("captureEnabled", getSharedPreferences("amanat", MODE_PRIVATE).getBoolean("capture", false));
+                android.content.SharedPreferences chat=getSharedPreferences("amanat",MODE_PRIVATE);
+                boolean chatAccess=false;
+                android.view.accessibility.AccessibilityManager manager=(android.view.accessibility.AccessibilityManager)getSystemService(ACCESSIBILITY_SERVICE);
+                if(manager!=null)for(android.accessibilityservice.AccessibilityServiceInfo info:manager.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                    android.content.pm.ServiceInfo si=info.getResolveInfo().serviceInfo;
+                    if(getPackageName().equals(si.packageName)&&ImoChatService.class.getName().equals(si.name))chatAccess=true;
+                }
+                state.put("chatAccess",chatAccess);
+                state.put("chatCapture",chat.getBoolean("chatCapture",false));
+                state.put("chatBound",!chat.getString("chatBoundMembers","").isEmpty());
+                state.put("chatMembers",chat.getString("chatBoundMembers",""));
+                state.put("chatCandidate",chat.getString("chatCandidateMembers",""));
+                state.put("chatCandidateAt",chat.getLong("chatCandidateAt",0));
+                state.put("chatLastRead",chat.getLong("chatLastRead",0));
+                state.put("chatLastVisible",chat.getInt("chatLastVisible",0));
             } catch (Exception ignored) { }
             return state.toString();
         }
@@ -144,6 +159,37 @@ public final class MainActivity extends Activity {
                     }).show();
             });
         }
+        @JavascriptInterface public void openChatSettings() {
+            runOnUiThread(()->new AlertDialog.Builder(MainActivity.this)
+                .setTitle("Чтение открытой группы IMO")
+                .setMessage("Служба специальных возможностей видит текст открытого окна IMO. После привязки она сохраняет только видимые передачи из Amanat на этом телефоне, даже при закрытом окне Аманата. Не отправляет сообщения и не нажимает кнопки. Неполные даты требуют проверки. Включите службу «Аманат: чтение группы IMO», затем откройте Amanat в IMO, вернитесь сюда и подтвердите привязку. Разрешение можно отозвать в любой момент.")
+                .setNegativeButton("Отмена",(d,w)->{})
+                .setPositiveButton("Открыть настройки",(d,w)->{
+                    try {startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));}
+                    catch(ActivityNotFoundException error){send("onError","Не удалось открыть специальные возможности.");}
+                }).show());
+        }
+        @JavascriptInterface public void bindChat() {
+            // Always show the exact recent header to the user before persisting a binding.
+            runOnUiThread(()->{
+                android.content.SharedPreferences p=getSharedPreferences("amanat",MODE_PRIVATE);
+                String pkg=p.getString("chatCandidatePkg",""), members=p.getString("chatCandidateMembers","");
+                long age=System.currentTimeMillis()-p.getLong("chatCandidateAt",0);
+                if(age<0||age>180000||!ImoScreenReader.candidate(pkg,"Amanat",members)) {
+                    send("onError","Сначала откройте группу Amanat в IMO на пару секунд, затем вернитесь и нажмите «Привязать».");return;
+                }
+                new AlertDialog.Builder(MainActivity.this).setTitle("Привязать группу Amanat?")
+                    .setMessage("Участники в заголовке: "+members+"\n\nБудут читаться передачи только при совпадении приложения, названия и этой строки. При изменении состава потребуется повторная привязка. Два чата с одинаковым названием и одинаковой строкой участников этим способом различить нельзя.")
+                    .setNegativeButton("Отмена",(d,w)->{})
+                    .setPositiveButton("Привязать",(d,w)->{
+                        p.edit().putString("chatBoundPkg",pkg).putString("chatBoundMembers",members).putBoolean("chatCapture",true).apply();
+                        send("onChatChanged","Группа привязана. Откройте её в IMO ещё раз для чтения.");
+                    }).show();
+            });
+        }
+        @JavascriptInterface public void pauseChat() {
+            getSharedPreferences("amanat",MODE_PRIVATE).edit().putBoolean("chatCapture",false).apply();
+        }
         @JavascriptInterface public String getInbox() { try (InboxStore db = new InboxStore(MainActivity.this)) { return db.pendingJson(); } }
         @JavascriptInterface public void markInbox(String id) { try (InboxStore db = new InboxStore(MainActivity.this)) { db.mark(id); } }
         @JavascriptInterface public void printHtml(String html) {
@@ -157,7 +203,7 @@ public final class MainActivity extends Activity {
                     @Override public void onPageFinished(WebView view, String url) {
                         PrintManager pm = (PrintManager) getSystemService(PRINT_SERVICE);
                         if (pm == null) { send("onError", "Служба печати недоступна на этом телефоне."); return; }
-                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4.asLandscape()).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
+                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
                     }
                 });
                 printView.loadDataWithBaseURL(ORIGIN, html, "text/html", "UTF-8", null);
