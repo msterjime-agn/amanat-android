@@ -91,7 +91,7 @@ export function selectRecords(records, f={}) {
     if (q && ![r.recipient,r.phone,r.city,r.sender,r.note,r.serial+'',dateLabel(r.day)].join(' ').toLocaleLowerCase().includes(q) && !(digits.length>=4 && r.phone.replace(/\D/g,'').includes(digits))) return false;
     if (f.basis==='issued') return (r.history || []).some(h=>!h.voidedAt && within(h.date,f.from,f.to));
     return within(f.basis==='received' ? r.receivedDate : r.day,f.from,f.to);
-  }).sort((a,b)=>b.day.localeCompare(a.day) || b.serial-a.serial);
+  }).sort((a,b)=>b.day.localeCompare(a.day) || a.serial-b.serial);
 }
 export function aggregate(records,from='',to='') {
   const groups = {};
@@ -127,13 +127,17 @@ export function parseMessage(text) {
   const raw=String(text || '').trim();
   const result={originalText:raw,type:'money',recipient:'',phone:'',city:'',sender:'',amount:'',currency:'',parcelTotal:'',parcelDesc:'',messageDate:'',warnings:[]};
   const lines=raw.split(/\n+/).map(x=>x.trim()).filter(Boolean);
-  const compact=raw.match(/^(?:[^\n:]{1,100}:\s*)?#(\d+)\s+(.+?)\s+(\+?\d{7,15})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*(USD|\$|TMT|TRY|EUR|RUB)\s*$/iu);
+  const compact=raw.replace(/\s+/gu,' ').match(/^(?:[^\n:]{1,100}:\s*)?#(\d+)\s+(.+?)\s+(\+?\d{7,15})\s+(.+?)\s+(\d+(?:[.,]\d{1,2})?)\s*(USD|\$|TMT|TRY|EUR|RUB)\s*$/iu);
   if(compact){
     result.recipient=compact[2].trim();result.phone=normalizePhone(compact[3]);result.city=compact[4].trim();result.amount=compact[5];result.currency=compact[6]==='$'?'USD':compact[6].toUpperCase();
-    result.warnings.push('Номер в сообщении: '+compact[1]+'. Дневной п/н Аманат присвоит при сохранении.');
+    result.serial=Number(compact[1]);
+    if(!Number.isSafeInteger(result.serial)||result.serial<1) result.warnings.push('Проверьте п/н сообщения.');
+    if(!/^[\p{L}][\p{L} .’'—-]*$/u.test(result.recipient)) result.warnings.push('Проверьте имя получателя.');
     return result;
   }
 
+  const serialMatch=raw.match(/(?:^|\s)#(\d+)\b/u);
+  if(serialMatch) result.serial=Number(serialMatch[1]);
   const get = labels=> {
     const re = new RegExp('^(?:'+labels+')\\s*[:=–—-]\\s*(.+)$','iu');
     return lines.map(l=>l.match(re)).find(Boolean)?.[1]?.trim() || '';
@@ -187,11 +191,26 @@ export function validateBackup(data) {
   for(const r of data.records) {
     validateRecord(r);
     if(typeof r.id!=='string'||!r.id||ids.has(r.id)||!Number.isSafeInteger(r.serial)||r.serial<1) throw new Error('Повреждены номера записей в копии.');
-    const num=r.day+':'+r.serial; if(nums.has(num)) throw new Error('В копии повторяется дневной номер.');
+    const num=r.day+':'+r.serial;
     const hids=new Set(); for(const h of r.history||[]) {if(hids.has(h.id)) throw new Error('В копии повторяется выдача.'); hids.add(h.id);}
     ids.add(r.id); nums.add(num);
   }
   if(!data.sequences || typeof data.sequences!=='object' || Array.isArray(data.sequences)) throw new Error('В копии нет счётчиков нумерации.');
   for(const [day,n] of Object.entries(data.sequences)) if(!validDate(day)||!Number.isSafeInteger(n)||n<0) throw new Error('Повреждены счётчики нумерации.');
   return data;
+}
+
+export function sequenceWarnings(records,day,serial) {
+  const same=records.filter(r=>r.day===day);
+  if(same.some(r=>r.serial===serial)) return ['П/н #'+serial+' за этот день уже существует. Подтвердите отдельную передачу.'];
+  const expected=Math.max(0,...same.map(r=>r.serial))+1;
+  return serial===expected?[]:['Нарушен порядок п/н: ожидался #'+expected+', получен #'+serial+'. Номер сохранится как в IMO.'];
+}
+export function importCandidate(text,timestamp=Date.now()) {
+  const p=parseMessage(text), day=today(new Date(timestamp));
+  const record={...p,day,receivedDate:day,messageDate:p.messageDate||day,amountMinor:0,currency:p.currency||'',parcelTotal:p.type==='money'?0:Number(p.parcelTotal),history:[],archived:false,note:'',senderPhone:''};
+  const warnings=[...p.warnings];
+  try {record.amountMinor=p.type==='parcel'?0:parseMoney(p.amount);validateRecord(record);} catch(err){warnings.push(err.message);}
+  if(!Number.isSafeInteger(p.serial)||p.serial<1) warnings.push('П/н сообщения не определён.');
+  return {record,parsed:{...p,day,receivedDate:day,messageDate:record.messageDate},warnings:[...new Set(warnings)]};
 }

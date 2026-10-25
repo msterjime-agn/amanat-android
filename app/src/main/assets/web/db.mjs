@@ -3,8 +3,13 @@ let connection;
 export function openDb() {
   if(connection) return Promise.resolve(connection);
   return new Promise((resolve,reject)=>{
-    const req=indexedDB.open('amanat-v1',1);
-    req.onupgradeneeded=()=>{const db=req.result;const s=db.createObjectStore('records',{keyPath:'id'});s.createIndex('dayNumber',['day','serial'],{unique:true});db.createObjectStore('meta',{keyPath:'key'});};
+    const req=indexedDB.open('amanat-v1',2);
+    req.onupgradeneeded=()=>{const db=req.result;let s;
+      if(!db.objectStoreNames.contains('records')){s=db.createObjectStore('records',{keyPath:'id'});db.createObjectStore('meta',{keyPath:'key'});}
+      else s=req.transaction.objectStore('records');
+      if(s.indexNames.contains('dayNumber'))s.deleteIndex('dayNumber');
+      s.createIndex('dayNumber',['day','serial'],{unique:false});
+    };
     req.onsuccess=()=>{connection=req.result;connection.onversionchange=()=>{connection.close();connection=null;};resolve(connection);};
     req.onerror=()=>reject(req.error);
     req.onblocked=()=>reject(new Error('Закройте другие вкладки приложения и откройте его снова.'));
@@ -23,7 +28,7 @@ export async function saveRecord(record,expectedUpdatedAt){
     const fail=msg=>{error=new Error(msg);tx.abort();};
     if(!record.id){
       const req=m.get('seq:'+record.day);
-      req.onsuccess=()=>{const serial=(req.result?.value||0)+1;result={...record,id:uid(),serial,history:[],archived:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};m.put({key:'seq:'+record.day,value:serial});records.add(result);};
+      req.onsuccess=()=>{const serial=Number.isSafeInteger(record.serial)&&record.serial>0?record.serial:(req.result?.value||0)+1;result={...record,id:uid(),serial,history:[],archived:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};m.put({key:'seq:'+record.day,value:Math.max(req.result?.value||0,serial)});records.add(result);};
     }else{
       const req=records.get(record.id);
       req.onsuccess=()=>{
