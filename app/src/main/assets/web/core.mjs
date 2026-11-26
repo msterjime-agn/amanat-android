@@ -290,3 +290,20 @@ export function sameHandover(a,b) {
     &&a.amountMinor===b.amountMinor&&a.currency===b.currency&&a.type===b.type
     &&a.parcelTotal===b.parcelTotal&&text(a.parcelDesc)===text(b.parcelDesc));
 }
+
+export function dialPhone(value){
+ let p=String(value||'').trim();if(!/^[+0-9 ()-]+$/.test(p))return '';
+ p=p.replace(/[^0-9+]/g,'');if(/^00/.test(p))p='+'+p.slice(2);
+ if(/^86\d{7}$/.test(p))p=p.slice(1);
+ if(/^6\d{7}$/.test(p))p='+993'+p;
+ if(/^993\d{8}$/.test(p))p='+'+p;
+ return /^\+?\d{7,15}$/.test(p)?p:'';
+}
+export function callMatches(records,number){
+ const key=dialPhone(number).replace(/^\+/,'');if(!key)return [];
+ return records.filter(r=>!r.deletedAt&&dialPhone(r.phone).replace(/^\+/,'')===key).sort((a,b)=>b.day.localeCompare(a.day)||a.serial-b.serial);
+}
+export function callIndex(records){
+ return records.filter(r=>!r.deletedAt&&dialPhone(r.phone)).map(r=>({id:r.id,phone:dialPhone(r.phone),day:r.day,serial:r.serial,
+ label:r.recipient+' · №'+r.serial+' · '+dateLabel(r.day)+' · '+STATUS[status(r)]+(r.archived?' · Архив':'')}));
+}
