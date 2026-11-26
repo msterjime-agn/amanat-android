@@ -35,7 +35,7 @@ public final class MainActivity extends Activity {
     private static final int SAVE_FILE = 101, OPEN_BACKUP = 102;
     private WebView webView, printView;
     private boolean pageReady = false;
-    private String pendingText;
+    private String pendingText, pendingCall;
     private byte[] pendingSave;
     private String pendingFilename;
 
@@ -95,6 +95,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> webView.evaluateJavascript("window.Amanat && window.Amanat." + function + "(" + JSONObject.quote(argument) + ");", null));
     }
     private void consumeIntent(Intent intent) {
+        if(intent!=null && intent.hasExtra("callNumber"))pendingCall=intent.getStringExtra("callNumber");
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction()) && "text/plain".equals(intent.getType())) {
             CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
             if (text != null) pendingText = text.toString();
@@ -102,6 +103,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent); setIntent(intent); consumeIntent(intent);
+        if(pageReady&&pendingCall!=null){send("onCallNumber",pendingCall);pendingCall=null;}
         if (pageReady && pendingText != null) { send("onSharedText", pendingText); pendingText = null; }
     }
     @Override protected void onResume() {
@@ -115,6 +117,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void ready() {
             runOnUiThread(() -> {
                 pageReady = true;
+                if(pendingCall!=null){send("onCallNumber",pendingCall);pendingCall=null;}
                 if (pendingText != null) { send("onSharedText", pendingText); pendingText = null; }
             });
         }
@@ -128,11 +131,53 @@ public final class MainActivity extends Activity {
                     String all = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
                     access = all != null && (":" + all + ":").contains(":" + component.flattenToString() + ":");
                 }
+                boolean callRole=false,callAvailable=false;
+                if(Build.VERSION.SDK_INT>=29){android.app.role.RoleManager roles=getSystemService(android.app.role.RoleManager.class);callAvailable=roles!=null&&roles.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING);callRole=callAvailable&&roles.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING);}
+                state.put("callerAvailable",callAvailable);state.put("callerRole",callRole);
+                state.put("callerEnabled",getSharedPreferences("amanat",MODE_PRIVATE).getBoolean("callerEnabled",false));
+                state.put("callerNotifications",getSystemService(NotificationManager.class).areNotificationsEnabled());
+                state.put("callerContacts",checkSelfPermission(android.Manifest.permission.READ_CONTACTS)==android.content.pm.PackageManager.PERMISSION_GRANTED);
+                state.put("callerError",getSharedPreferences("amanat",MODE_PRIVATE).getString("callerError",""));
                 state.put("notificationAccess", access);
                 state.put("captureEnabled", getSharedPreferences("amanat", MODE_PRIVATE).getBoolean("capture", false));
+                android.content.SharedPreferences chat=getSharedPreferences("amanat",MODE_PRIVATE);
+                boolean chatAccess=false;
+                android.view.accessibility.AccessibilityManager manager=(android.view.accessibility.AccessibilityManager)getSystemService(ACCESSIBILITY_SERVICE);
+                if(manager!=null)for(android.accessibilityservice.AccessibilityServiceInfo info:manager.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                    android.content.pm.ServiceInfo si=info.getResolveInfo().serviceInfo;
+                    if(getPackageName().equals(si.packageName)&&ImoChatService.class.getName().equals(si.name))chatAccess=true;
+                }
+                state.put("chatAccess",chatAccess);
+                state.put("chatCapture",chat.getBoolean("chatCapture",false));
+                state.put("chatBound",!chat.getString("chatBoundMembers","").isEmpty());
+                state.put("chatMembers",chat.getString("chatBoundMembers",""));
+                state.put("chatCandidate",chat.getString("chatCandidateMembers",""));
+                state.put("chatCandidateAt",chat.getLong("chatCandidateAt",0));
+                state.put("chatLastRead",chat.getLong("chatLastRead",0));
+                state.put("chatLastVisible",chat.getInt("chatLastVisible",0));
             } catch (Exception ignored) { }
             return state.toString();
         }
+        @JavascriptInterface public void updateCallIndex(String json) {
+            try(CallIndexStore store=new CallIndexStore(MainActivity.this)){store.replace(json);}catch(Exception error){throw new IllegalStateException("Не удалось обновить поиск звонков",error);}
+        }
+        @JavascriptInterface public void configureCaller() {
+            runOnUiThread(()->{
+                if(Build.VERSION.SDK_INT<29){send("onError","Определение звонков доступно начиная с Android 10.");return;}
+                new AlertDialog.Builder(MainActivity.this).setTitle("Передачи при звонках")
+                    .setMessage("Выберите Аманат для определения номера вместо текущего определителя. При входящих и исходящих обычных звонках появится уведомление с передачами. Для номеров из контактов Android дополнительно требует доступ к контактам; сами контакты не копируются. Звонки не блокируются.")
+                    .setNegativeButton("Отмена",(d,w)->{})
+                    .setPositiveButton("Продолжить",(d,w)->{
+                        android.app.role.RoleManager roles=getSystemService(android.app.role.RoleManager.class);
+                        if(roles==null||!roles.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING)){send("onError","Телефон не предоставляет роль определителя номера.");return;}
+                        getSharedPreferences("amanat",MODE_PRIVATE).edit().putBoolean("callerEnabled",true).apply();
+                        if(!roles.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING))startActivityForResult(roles.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING),401);
+                        else requestCallerPermissions();
+                    }).show();
+            });
+        }
+        @JavascriptInterface public void disableCaller(){getSharedPreferences("amanat",MODE_PRIVATE).edit().putBoolean("callerEnabled",false).apply();getSystemService(NotificationManager.class).cancel(407);}
+        @JavascriptInterface public void openCallerNotifications(){runOnUiThread(()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));}
         @JavascriptInterface public void setCaptureEnabled(boolean enabled) { getSharedPreferences("amanat", MODE_PRIVATE).edit().putBoolean("capture", enabled).apply(); }
         @JavascriptInterface public void openNotificationSettings() {
             runOnUiThread(() -> {
@@ -143,6 +188,37 @@ public final class MainActivity extends Activity {
                         catch (ActivityNotFoundException error) { send("onError", "Не удалось открыть настройки доступа к уведомлениям."); }
                     }).show();
             });
+        }
+        @JavascriptInterface public void openChatSettings() {
+            runOnUiThread(()->new AlertDialog.Builder(MainActivity.this)
+                .setTitle("Чтение открытой группы IMO")
+                .setMessage("Служба специальных возможностей видит текст открытого окна IMO. После привязки она сохраняет только видимые передачи из Amanat на этом телефоне, даже при закрытом окне Аманата. Не отправляет сообщения и не нажимает кнопки. Неполные даты требуют проверки. Включите службу «Аманат: чтение группы IMO», затем откройте Amanat в IMO, вернитесь сюда и подтвердите привязку. Разрешение можно отозвать в любой момент.")
+                .setNegativeButton("Отмена",(d,w)->{})
+                .setPositiveButton("Открыть настройки",(d,w)->{
+                    try {startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));}
+                    catch(ActivityNotFoundException error){send("onError","Не удалось открыть специальные возможности.");}
+                }).show());
+        }
+        @JavascriptInterface public void bindChat() {
+            // Always show the exact recent header to the user before persisting a binding.
+            runOnUiThread(()->{
+                android.content.SharedPreferences p=getSharedPreferences("amanat",MODE_PRIVATE);
+                String pkg=p.getString("chatCandidatePkg",""), members=p.getString("chatCandidateMembers","");
+                long age=System.currentTimeMillis()-p.getLong("chatCandidateAt",0);
+                if(age<0||age>180000||!ImoScreenReader.candidate(pkg,"Amanat",members)) {
+                    send("onError","Сначала откройте группу Amanat в IMO на пару секунд, затем вернитесь и нажмите «Привязать».");return;
+                }
+                new AlertDialog.Builder(MainActivity.this).setTitle("Привязать группу Amanat?")
+                    .setMessage("Участники в заголовке: "+members+"\n\nБудут читаться передачи только при совпадении приложения, названия и этой строки. При изменении состава потребуется повторная привязка. Два чата с одинаковым названием и одинаковой строкой участников этим способом различить нельзя.")
+                    .setNegativeButton("Отмена",(d,w)->{})
+                    .setPositiveButton("Привязать",(d,w)->{
+                        p.edit().putString("chatBoundPkg",pkg).putString("chatBoundMembers",members).putBoolean("chatCapture",true).apply();
+                        send("onChatChanged","Группа привязана. Откройте её в IMO ещё раз для чтения.");
+                    }).show();
+            });
+        }
+        @JavascriptInterface public void pauseChat() {
+            getSharedPreferences("amanat",MODE_PRIVATE).edit().putBoolean("chatCapture",false).apply();
         }
         @JavascriptInterface public String getInbox() { try (InboxStore db = new InboxStore(MainActivity.this)) { return db.pendingJson(); } }
         @JavascriptInterface public void markInbox(String id) { try (InboxStore db = new InboxStore(MainActivity.this)) { db.mark(id); } }
@@ -157,7 +233,7 @@ public final class MainActivity extends Activity {
                     @Override public void onPageFinished(WebView view, String url) {
                         PrintManager pm = (PrintManager) getSystemService(PRINT_SERVICE);
                         if (pm == null) { send("onError", "Служба печати недоступна на этом телефоне."); return; }
-                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4.asLandscape()).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
+                        pm.print("Аманат — список передач", view.createPrintDocumentAdapter("Аманат — список передач"), new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).setColorMode(PrintAttributes.COLOR_MODE_MONOCHROME).build());
                     }
                 });
                 printView.loadDataWithBaseURL(ORIGIN, html, "text/html", "UTF-8", null);
@@ -180,8 +256,17 @@ public final class MainActivity extends Activity {
             });
         }
     }
+    private void requestCallerPermissions(){
+        java.util.ArrayList<String> permissions=new java.util.ArrayList<>();
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)permissions.add(android.Manifest.permission.POST_NOTIFICATIONS);
+        if(checkSelfPermission(android.Manifest.permission.READ_CONTACTS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)permissions.add(android.Manifest.permission.READ_CONTACTS);
+        if(!permissions.isEmpty())requestPermissions(permissions.toArray(new String[0]),402);
+        else send("onChatChanged","Определение звонков включено. Проверьте обычным звонком.");
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){super.onRequestPermissionsResult(requestCode,permissions,results);if(requestCode==402)send("onChatChanged","Настройки звонков обновлены.");}
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(requestCode==401){if(resultCode==RESULT_OK)requestCallerPermissions();else send("onChatChanged","Определение номера не выбрано.");return;}
         if (requestCode == SAVE_FILE) {
             final byte[] bytes = pendingSave; final String filename = pendingFilename;
             pendingSave = null; pendingFilename = null;

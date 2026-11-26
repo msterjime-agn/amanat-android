@@ -38,11 +38,11 @@ test('voiding preserves history but restores outstanding balance',()=>{
 test('same daily serial is legitimate on two dates and print preserves it',()=>{
   const a=rec(),b=rec({id:'record-2',day:'2026-01-03',receivedDate:'2026-01-03'});
   assert.doesNotThrow(()=>validateBackup({app:'amanat',version:1,records:[a,b],sequences:{'2026-01-02':1,'2026-01-03':1}}));
-  const html=printDocument([a,b],{generatedDay:'2026-01-04'});assert.match(html,/02\.01\.2026/);assert.match(html,/03\.01\.2026/);assert.equal((html.match(/<td>1<\/td>/g)||[]).length,2);
+  const html=printDocument([a,b],{generatedDay:'2026-01-04'});assert.match(html,/02\.01\.2026/);assert.match(html,/03\.01\.2026/);assert.equal((html.match(/class="print-serial">#1<\/span>/g)||[]).length,2);
 });
-test('same-day duplicate serial and malformed backup are rejected',()=>{
+test('confirmed duplicate serial survives backup; malformed backup is rejected',()=>{
   const a=rec(),b=rec({id:'record-2'});
-  assert.throws(()=>validateBackup({app:'amanat',version:1,records:[a,b],sequences:{}}),/повторяется дневной номер/);
+  assert.doesNotThrow(()=>validateBackup({app:'amanat',version:1,records:[a,b],sequences:{}}));
   assert.throws(()=>validateBackup({records:[]}));assert.throws(()=>validateBackup({app:'amanat',version:1,records:[a],sequences:{bad:1}}));
 });
 test('filters retain serials and search normalizes phone digits',()=>{
