@@ -131,6 +131,7 @@ export function parseMessage(text) {
   if(compact){
     result.recipient=compact[2].trim();result.phone=normalizePhone(compact[3]);result.city=compact[4].trim();result.amount=compact[5];result.currency=compact[6]==='$'?'USD':compact[6].toUpperCase();
     result.serial=Number(compact[1]);
+    if(/(?:USD|TMT|TRY|EUR|RUB|\$)/iu.test(result.city)) result.warnings.push('В сообщении несколько сумм: проверьте сумму и валюту.');
     if(!Number.isSafeInteger(result.serial)||result.serial<1) result.warnings.push('Проверьте п/н сообщения.');
     if(!/^[\p{L}][\p{L} .’'—-]*$/u.test(result.recipient)) result.warnings.push('Проверьте имя получателя.');
     return result;
@@ -253,14 +254,29 @@ export function screenDateWithYear(label,year,currentDay=today()) {
 export function screenContext(item) {
   return item.screen?.context || item.screen?.warning?.match(/«([^»]+)»/u)?.[1] || '';
 }
+export function automaticScreenDate(label,referenceDay=today()) {
+  const text=String(label||'').trim().toLocaleLowerCase();
+  if(text==='сегодня'||text==='today')return referenceDay;
+  if(text==='вчера'||text==='yesterday'){
+    const date=new Date(referenceDay+'T12:00:00Z');date.setUTCDate(date.getUTCDate()-1);return date.toISOString().slice(0,10);
+  }
+  const full=text.match(/^(\d{1,2})\s+([\p{L}]+)\.?[,\s]+(\d{4})(?:\s*г\.?)?$/u);
+  if(full)return screenDateWithYear(full[1]+' '+full[2],Number(full[3]),referenceDay);
+  const year=Number(referenceDay.slice(0,4));
+  // A yearless past chat label denotes the latest occurrence, never the capture day.
+  const thisYear=screenDateWithYear(text,year,year+'-12-31');
+  if(!thisYear)return '';
+  return thisYear<=referenceDay?thisYear:screenDateWithYear(text,year-1,referenceDay);
+}
 export function applyScreenSelection(item,yearSelection,daySelection,currentDay=today()) {
   if(!item.screen||validDate(item.screen.day))return inboxCandidate(item);
   const label=screenContext(item);
   if(label){
-    const day=yearSelection?.confirmedOn===currentDay?screenDateWithYear(label,yearSelection.year,currentDay):'';
+    const referenceDay=Number.isFinite(item.timestamp)?today(new Date(item.timestamp)):currentDay;
+    const day=yearSelection?.confirmedOn===currentDay?screenDateWithYear(label,yearSelection.year,currentDay):automaticScreenDate(label,referenceDay>currentDay?currentDay:referenceDay);
     if(!day)return inboxCandidate(item); // A known day/month is never overwritten by a bulk fallback day.
     const c=inboxCandidate({...item,screen:{...item.screen,day,warning:''}});
-    c.record.note='Дата '+dateLabel(day)+' из IMO; год выбран при загрузке.';
+    c.record.note='Дата '+dateLabel(day)+' из IMO.';
     return c;
   }
   return applyScreenDay(item,daySelection,currentDay);
